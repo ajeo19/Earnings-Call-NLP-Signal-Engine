@@ -17,20 +17,29 @@ def save_parquet(df: pd.DataFrame, path: str | Path) -> None:
     df.to_parquet(path, index=False)
 
 
-def run_ingest() -> None:
-    """Placeholder data ingestion pipeline.
+def build_demo_dataset() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "ticker": ["AAPL", "AAPL", "MSFT", "MSFT"],
+            "call_date": pd.to_datetime(["2024-01-01", "2024-04-01", "2024-01-01", "2024-04-01"]),
+            "transcript": [
+                "Prepared remarks. Question and answer session. Management discussed guidance.",
+                "Prepared remarks. Question and answer session. Management discussed margins.",
+                "Prepared remarks. Question and answer session. Management discussed cloud revenue.",
+                "Prepared remarks. Question and answer session. Management discussed AI adoption.",
+            ],
+            "source": ["demo", "demo", "demo", "demo"],
+        }
+    )
 
-    Replace this with actual transcript, price, factor, and earnings downloads.
+
+def run_ingest() -> None:
+    """Generate a local demo dataset for a working pipeline.
+
+    Replace this with real transcript, price, factor, and earnings ingestion for
+    production use. This version is intentionally deterministic and fast.
     """
     ensure_directories()
-
-    # Example empty dataset placeholders to ensure the project runs cleanly.
-    df = pd.DataFrame({
-        "ticker": [],
-        "call_date": [],
-        "transcript": [],
-        "source": [],
-    })
-
+    df = build_demo_dataset()
     save_parquet(df, "data/processed/transcripts_raw.parquet")
-    print("Ingest pipeline ready; add your actual download logic here.")
+    print("Demo ingest complete: data/processed/transcripts_raw.parquet")

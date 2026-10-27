@@ -1,6 +1,11 @@
+import os
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+from dotenv import load_dotenv
+
+load_dotenv()
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
 PROCESSED_DIR = DATA_DIR / "processed"
@@ -25,3 +30,7 @@ def ensure_directories() -> None:
         RESULTS_DIR / "reports",
     ]:
         path.mkdir(parents=True, exist_ok=True)
+
+
+def get_env(name: str, default: str = "") -> str:
+    return os.getenv(name, default)
