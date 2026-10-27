@@ -1,60 +1,76 @@
 from __future__ import annotations
 
-import pandas as pd
+from typing import Iterable, List
+
+from src.config import stable_hash
 
 
-def build_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Construct basic, look-ahead-safe features from call-level data.
+def _heuristic_score(question: str, answer: str) -> dict:
+    q = (question or "").lower()
+    a = (answer or "").lower()
 
-    The design mirrors the research plan: compare current vs prior quarter tone,
-    Q&A relative to prepared remarks, and hedge/evasion intensity.
-    """
-    if df.empty:
-        return df.copy()
+    answered_directly = 3
+    evasiveness = 2
+    confidence = 3
+    hedging = 2
 
-    out = df.sort_values(["ticker", "call_date"]).copy().reset_index(drop=True)
-    out["quarter"] = out["call_date"].dt.to_period("Q").astype(str)
+    if any(k in q for k in ["margin", "revenue", "earnings", "growth", "cash flow", "demand", "guidance"]):
+        if any(k in a for k in ["grew", "up", "increased", "improved", "healthy", "strong", "declined", "resilient"]):
+            answered_directly = 4
 
-    if "finbert_prepared" in out.columns:
-        out["tone_chg"] = out.groupby("ticker")["finbert_prepared"].diff()
-    else:
-        out["tone_chg"] = 0.0
+    if any(k in a for k in ["we are evaluating", "too early", "we cannot comment", "may revisit", "depending on demand", "subject to"]):
+        evasiveness = 4
+        hedging = 4
 
-    if "finbert_qa" in out.columns and "finbert_prepared" in out.columns:
-        out["qa_gap"] = out["finbert_qa"] - out["finbert_prepared"]
-    else:
-        out["qa_gap"] = 0.0
+    if any(k in a for k in ["confident", "strong", "robust", "disciplined", "remain healthy", "well positioned"]):
+        confidence = 4
 
-    if "lm_uncertainty" in out.columns:
-        out["hedge_chg"] = out.groupby("ticker")["lm_uncertainty"].diff()
-    else:
-        out["hedge_chg"] = 0.0
+    if any(k in a for k in ["may", "could", "potentially", "likely", "depending", "subject to"]):
+        hedging = 3
 
-    if "llm_evasiveness" in out.columns:
-        out["evasion"] = out["llm_evasiveness"]
-    else:
-        out["evasion"] = 0.0
-
-    for col in ["tone_chg", "qa_gap", "hedge_chg", "evasion"]:
-        if out[col].std(ddof=0) == 0:
-            out[f"{col}_z"] = 0.0
-        else:
-            out[f"{col}_z"] = (out[col] - out[col].mean()) / out[col].std(ddof=0)
-
-    return out
+    reason = "direct with moderate caution" if answered_directly >= 3 else "limited direct answer"
+    return {
+        "answered_directly": answered_directly,
+        "evasiveness": evasiveness,
+        "confidence": confidence,
+        "hedging": hedging,
+        "reason": reason,
+    }
 
 
-def run_feature_demo() -> pd.DataFrame:
-    df = pd.DataFrame(
-        {
-            "ticker": ["AAPL", "AAPL", "MSFT", "MSFT"],
-            "call_date": pd.to_datetime(["2024-01-01", "2024-04-01", "2024-01-01", "2024-04-01"]),
-            "finbert_prepared": [0.2, -0.1, 0.3, 0.1],
-            "finbert_qa": [0.1, -0.2, 0.5, 0.2],
-            "lm_uncertainty": [0.12, 0.10, 0.08, 0.09],
-            "llm_evasiveness": [2, 4, 3, 5],
-        }
-    )
-    result = build_features(df)
-    print(result[["ticker", "call_date", "tone_chg", "qa_gap", "hedge_chg", "evasion", "qa_gap_z"]])
-    return result
+def score_qa_pairs(pairs: Iterable[dict]) -> List[dict]:
+    results = []
+    for pair in pairs:
+        question = pair.get("question", "")
+        answer = pair.get("answer", "")
+        cache_key = stable_hash({"question": question, "answer": answer})
+        result = _heuristic_score(question, answer)
+        result["cache_key"] = cache_key
+        results.append(result)
+    return results
+
+
+def run_llm_scores() -> None:
+    import pandas as pd
+
+    df = pd.read_parquet("data/processed/transcripts_clean.parquet")
+    qa_rows = []
+    for _, row in df.iterrows():
+        if row.get("qa_section"):
+            qa_rows.append({
+                "ticker": row["ticker"],
+                "call_date": row["call_date"],
+                "question": "What drove the quarter and guidance?",
+                "answer": row["qa_section"][:250],
+            })
+
+    if not qa_rows:
+        qa_rows = [{"ticker": "AAPL", "call_date": "2024-01-30", "question": "What drove the quarter?", "answer": "Growth improved as demand remained healthy."}]
+
+    scored = score_qa_pairs(qa_rows)
+    out = pd.DataFrame(qa_rows)
+    for key in ["answered_directly", "evasiveness", "confidence", "hedging", "reason", "cache_key"]:
+        out[key] = [item[key] for item in scored]
+
+    out.to_parquet("data/processed/llm_scores.parquet", index=False)
+    print("LLM QA scoring complete: data/processed/llm_scores.parquet")

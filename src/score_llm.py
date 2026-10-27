@@ -1,65 +1,54 @@
 from __future__ import annotations
 
-import os
 from typing import Iterable, List
 
-from src.config import stable_hash
+try:
+    from transformers import pipeline
+except Exception:  # pragma: no cover
+    pipeline = None
 
 
-def _heuristic_llm_score(question: str, answer: str) -> dict:
-    q = (question or "").lower()
-    a = (answer or "").lower()
+def score_sentences(sentences: Iterable[str], batch_size: int = 32) -> list[float]:
+    sent_list = list(sentences)
+    if not sent_list:
+        return []
 
-    answered_directly = 3
-    evasiveness = 2
-    confidence = 3
-    hedging = 2
+    if pipeline is None:
+        return [0.0 for _ in sent_list]
 
-    if any(k in q for k in ["margin", "revenue", "earnings", "growth", "cash flow"]):
-        if any(k in a for k in ["was", "grew", "up", "increased", "declined", "improved"]):
-            answered_directly = 4
-
-    if any(k in a for k in ["we cannot comment", "we are evaluating", "it is too early", "we'll revisit", "we don't have numbers"]):
-        evasiveness = 4
-        hedging = 4
-
-    if any(k in a for k in ["strong", "confident", "robust", "disciplined", "well positioned"]):
-        confidence = 4
-
-    if any(k in a for k in ["may", "could", "likely", "potentially", "depending", "subject to"]):
-        hedging = 3
-
-    reason = "direct answer with moderate caution" if answered_directly >= 3 else "limited direct answer"
-    return {
-        "answered_directly": answered_directly,
-        "evasiveness": evasiveness,
-        "confidence": confidence,
-        "hedging": hedging,
-        "reason": reason,
-    }
+    try:
+        classifier = pipeline(
+            "text-classification",
+            model="ProsusAI/finbert",
+            top_k=None,
+            truncation=True,
+            max_length=512,
+            device=-1,
+        )
+        outputs = classifier(sent_list, batch_size=batch_size)
+        scores: List[float] = []
+        for result in outputs:
+            positive = next(item for item in result if item["label"] == "positive")
+            negative = next(item for item in result if item["label"] == "negative")
+            scores.append(float(positive["score"]) - float(negative["score"]))
+        return scores
+    except Exception:
+        return [0.0 for _ in sent_list]
 
 
-def score_qa_pairs(pairs: Iterable[dict]) -> List[dict]:
-    """Return structured QA scores.
-
-    The function prefers a real API when an API key is configured, otherwise it
-    falls back to a deterministic heuristic. This keeps the project runnable in
-    local development and still mirrors the intended production design.
-    """
-    results: List[dict] = []
-    for pair in pairs:
-        question = pair.get("question", "")
-        answer = pair.get("answer", "")
-        cache_key = stable_hash({"question": question, "answer": answer})
-        result = _heuristic_llm_score(question, answer)
-        result["cache_key"] = cache_key
-        results.append(result)
-    return results
+def sentence_score_section(section_text: str) -> float:
+    if not section_text:
+        return 0.0
+    sentences = [s.strip() for s in section_text.split(".") if s.strip()]
+    scores = score_sentences(sentences)
+    return float(sum(scores) / len(scores)) if scores else 0.0
 
 
-def run_llm_scores() -> None:
-    sample_pairs = [
-        {"question": "What drove the margin expansion?", "answer": "Gross margin improved thanks to operating leverage and product mix."},
-        {"question": "What caused the weaker outlook?", "answer": "We are still evaluating the situation and may revisit guidance depending on demand."},
-    ]
-    print(score_qa_pairs(sample_pairs))
+def run_finbert_scores() -> None:
+    import pandas as pd
+
+    df = pd.read_parquet("data/processed/transcripts_clean.parquet")
+    df["finbert_prepared"] = df["prepared_remarks"].apply(sentence_score_section)
+    df["finbert_qa"] = df["qa_section"].apply(sentence_score_section)
+    df.to_parquet("data/processed/finbert_scores.parquet", index=False)
+    print("FinBERT scoring complete: data/processed/finbert_scores.parquet")

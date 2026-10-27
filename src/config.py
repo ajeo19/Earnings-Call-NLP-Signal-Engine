@@ -1,4 +1,5 @@
 import os
+from hashlib import sha256
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -34,3 +35,8 @@ def ensure_directories() -> None:
 
 def get_env(name: str, default: str = "") -> str:
     return os.getenv(name, default)
+
+
+def stable_hash(payload):
+    serialized = str(payload).encode("utf-8")
+    return sha256(serialized).hexdigest()

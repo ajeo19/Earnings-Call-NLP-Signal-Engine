@@ -1,34 +1,23 @@
-from src.ingest import run_ingest
-from src.split import run_split
-from src.score_finbert import run_finbert_scores
-from src.score_llm import run_llm_scores
-from src.features import build_features
-from src.event_study import run_event_study
-from src.reporting import save_results
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
 
 
-def main() -> None:
-    print("[1/6] Ingesting datasets...")
-    run_ingest()
+def save_results() -> None:
+    output_dir = Path("results")
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    print("[2/6] Splitting transcripts...")
-    run_split()
+    event = pd.read_parquet("data/processed/event_study.parquet") if Path("data/processed/event_study.parquet").exists() else pd.DataFrame({"ticker": [], "CAR_10": []})
+    summary = pd.DataFrame({
+        "metric": ["tickers", "avg_car_10", "status"],
+        "value": [len(event), float(event["CAR_10"].mean()) if not event.empty else 0.0, "demo pipeline complete"],
+    })
 
-    print("[3/6] Scoring with FinBERT...")
-    run_finbert_scores()
+    table_path = output_dir / "tables" / "pipeline_summary.csv"
+    table_path.parent.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(table_path, index=False)
 
-    print("[4/6] Scoring with LLM...")
-    run_llm_scores()
-
-    print("[5/6] Building features...")
-    build_features()
-
-    print("[6/6] Running event study and exports...")
-    run_event_study()
-    save_results()
-
-    print("Pipeline complete.")
-
-
-if __name__ == "__main__":
-    main()
+    event.to_csv(output_dir / "tables" / "event_study_results.csv", index=False)
+    print(f"Results saved to {table_path} and {output_dir / 'tables' / 'event_study_results.csv'}")
